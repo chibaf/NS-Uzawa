@@ -1,0 +1,157 @@
+/*
+ * Incompressible Navier Stokes
+ * with Taylor-Hood Finite element
+ * Non linearity : Newton method
+ * continuation on Reynols Number
+ * Mesh adaptation
+*/
+
+real w = 0.25;// 容器半径
+real H = 0.8;// 容器高さ
+real S = 0.1;// 内部構造物下端
+real H1 = 0.6;// 内部構造物高さ
+real d = 0.15;// 内部構造物内径
+real w1 = 0.03;// 内部構造物厚み
+real ch = 0.04;// 面取り
+real rpipe = 0.02;// 中心軸回避用パイプ半径
+real d2=0.025; // frozen wall
+// --- 2. 境界定義 ---
+border C1(t=rpipe, w-d2) {x=t; y=d2; label=1;}
+border C2(t=d2, H){x=w-d2; y=t; label=2;}
+//border Chamfer(t=0,1){x=w - t*ch; y=H-ch + t*ch; label=2;}
+border C3(t=w-d2,rpipe){x=t; y=H; label=3;}
+border Cpipe(t=H,d2){x=rpipe; y=t; label=12;}
+
+border D1(t=0, w1) {x=d+t; y=S; label=20;}
+border D2(t=S, S+H1) {x=d+w1; y=t; label=20;}
+border D3(t=0, pi)    {x=d+w1/2.0 + (w1/2.0)*cos(t); 
+                       y=S+H1 + (w1/2.0)*sin(t); label=20;}
+border D4(t=S+H1, S)  {x=d; y=t; label=20;}
+mesh Th = buildmesh(C1(20) + C2(80) + C3(20) + Cpipe(80)+ D1(-10) + D2(-40) + D3(-10) + D4(-40));
+
+
+// Parameters
+real reymax = 1600;	// ok < 125000
+real nu = 1./100.;
+real dt = 0.1;
+func BCu1 = 4*x*(1-x);
+real epsr=1e-6;
+
+// Mesh
+//mesh Th = square(8, 8);
+
+// Fespace
+fespace Xh(Th, P2);
+Xh uu1, uu2;
+Xh psi, phi;
+
+fespace Mh(Th, P1);
+fespace XXMh(Th, [P2, P2, P1]);
+XXMh [u1, u2, p];
+XXMh [v1, v2, q];
+XXMh [up1, up2, pp];
+
+// Macro
+macro div(u1, u2) (dx(u1) + dy(u2)) //
+macro grad(u1, u2) [dx(u1), dy(u2)] //
+macro ugrad(u1, u2, v) (u1*dx(v) + u2*dy(v)) //
+macro Ugrad(u1, u2, v1, v2) [ugrad(u1, u2, v1), ugrad(u1, u2, v2)] //
+
+Mh fP = ( (x >= rpipe && x < d) && (y >= S && y <= S+S*0.1) ) ? 10.0 : 0.0;
+
+// Problem Stokes (with solve)
+solve Stokes ([u1, u2, p], [v1, v2, q], solver=sparsesolver)
+	= int2d(Th)(
+		( dx(u1)*dx(v1) + dy(u1)*dy(v1)
+		+ dx(u2)*dx(v2) + dy(u2)*dy(v2) )
+		- p * q * epsr
+		- p*div(v1, v2) - q*div(u1, u2)
+	)
+//	+ on(3, u1=BCu1, u2=0)
+	+ on(1, 2, 3,20, u1=0, u2=0);
+
+// Plot
+uu1 = u1;
+uu2 = u2;
+//plot(coef=0.2, cmm="[u1, u2] and p" ,p, [uu1, uu2], wait=1);
+
+// Problem stream-lines (with solve)
+solve streamlines (psi, phi)
+	= int2d(Th)(
+		  dx(psi)*dx(phi)
+		+ dy(psi)*dy(phi)
+	)
+	+ int2d(Th)(
+		- phi*(dy(u1) - dx(u2))
+	)
+	+ on(1, 2, 3, 4, psi=0);
+
+// Plot
+//plot(psi, wait=1);
+
+// Variatonal form definition Navier-Stokes
+int i = 0;
+real alpha = 1/dt;
+
+varf vDNS ([u1, u2, p], [v1, v2, q])
+	= int2d(Th)(
+		+ nu * (
+			  dx(u1)*dx(v1) + dy(u1)*dy(v1)
+			+ dx(u2)*dx(v2) + dy(u2)*dy(v2)
+		)
+		- p * q * epsr
+		- p*div(v1, v2) - q*div(u1, u2)
+		+ Ugrad(u1, u2, up1, up2)'*[v1, v2]
+		+ Ugrad(up1, up2, u1, u2)'*[v1, v2]
+	)
+	+ on(3, u1=BCu1, u2=0)
+	+ on(1, 2, 4, u1=0, u2=0);
+	;
+
+varf vNS ([u1, u2, p], [v1, v2, q])	// DF(u)u - F(u)
+	= int2d(Th)(
+		  Ugrad(up1, up2, up1, up2)'*[v1, v2]
+	)
+	+ on(3, u1=BCu1, u2=0)
+	+ on(1, 2, 4, u1=0, u2=0);
+	;
+
+for (real re = 100; re <= reymax; re *= 2) {
+	real lerr = 0.1;
+	nu = 1./re;
+
+	if (re > 8000) lerr = 0.05;
+	if (re > 10000) lerr = 0.01;
+	for (int step = 0; step < 2; step++) {
+		// Mesh adaptation & interpolation
+		Th = adaptmesh(Th, [u1, u2], p, err=lerr, nbvx=100000, abserror=0, cutoff=0.01);
+		[u1, u2, p] = [u1, u2, p];
+		[up1, up2, pp] = [up1, up2, pp];
+
+		// Newton
+		for (i = 0; i <= 20; i++) {
+			// Update
+			up1[] = u1[];
+
+			// Solve
+			real[int] b = vNS(0, XXMh);	// build right hand side
+			matrix Ans = vDNS(XXMh, XXMh);	// build matrix
+			set(Ans, solver=sparsesolver);	// set solver
+			u1[] = Ans^-1*b;	// solve linear system
+
+			// Error
+			b = u1[]-up1[];
+
+			cout << "iter = "<< i << ", err = " << b.l2 << ", rey = " << re << endl;
+
+			// Convergence criteria
+			if (b.l2 < 1e-6) break;
+		}
+	}
+
+	// Stream-lines
+	uu1 = u1;
+	uu2 = u2;
+	streamlines;
+	plot(coef=0.2, cmm="rey="+re+" [u1, u2] and p", psi, [uu1, uu2], wait=0, nbiso=20);//, ps="cavity-"+re+".ps");
+}
