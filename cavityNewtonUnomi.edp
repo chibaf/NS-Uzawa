@@ -105,7 +105,7 @@ varf vDNS ([u1, u2, p], [v1, v2, q])
 		+ Ugrad(up1, up2, u1, u2)'*[v1, v2]
 	)
 	+ on(3, u1=BCu1, u2=0)
-	+ on(1, 2, 4, u1=0, u2=0);
+	+ on(1, 2, 4, u1=0, u2=0)
 	;
 
 varf vNS ([u1, u2, p], [v1, v2, q])	// DF(u)u - F(u)
