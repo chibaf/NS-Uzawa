@@ -1,0 +1,40 @@
+// Parameters
+int bottombeam = 2; //label of bottombeam
+real E = 21.5;
+real sigma = 0.29;
+real gravity = -0.05;
+real coef = 0.2;
+
+// Mesh (solid)
+border a(t=2, 0){x=0; y=t; label=1;}
+border b(t=0, 10){x=t; y=0; label=bottombeam;}
+border c(t=0, 2){x=10; y=t; label=1;}
+border d(t=0, 10){x=10-t; y=2; label=3;}
+mesh th = buildmesh(b(20) + c(5) + d(20) + a(5));
+
+// Fespace (solid)
+fespace Vh(th, P1);
+Vh uu, w, vv, s;
+
+// Macro
+real sqrt2 = sqrt(2.);
+macro epsilon(u1, u2) [dx(u1), dy(u2), (dy(u1)+dx(u2))/sqrt2] //
+macro div(u1, u2) (dx(u1) + dy(u2)) //
+
+// Problem (solid)
+real mu = E/(2*(1+sigma));
+real lambda = E*sigma/((1+sigma)*(1-2*sigma));
+solve Elasticity([uu, vv], [w, s])
+    = int2d(th)(
+          lambda*div(w,s)*div(uu,vv)
+        + 2.*mu*(epsilon(w,s)'*epsilon(uu,vv))
+    )
+    + int2d(th)(
+        - gravity*s
+    )
+    + on(1, uu=0, vv=0)
+    ;
+
+plot([uu, vv], wait=true);
+mesh th1 = movemesh(th, [x+uu, y+vv]);
+plot(th1, wait=true);
